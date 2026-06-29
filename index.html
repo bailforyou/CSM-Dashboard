@@ -604,25 +604,29 @@ function firmStatus(f) {
 }
 
 function detectReactivations() {
-  // Won back = firm had no live event for 30+ days, then had a live event.
-  // Since CSMs log activity only against dormant firms in their queue, we proxy
-  // the "30+ day quiet period" by: earliest touch on the firm was >= 30 days
-  // before the current latest transcript. That gap implies the firm was quiet
-  // at touch time and stayed quiet for at least 30 days before transacting.
+  // Won back = firm had no live event for 30+ days, then had a live event after our touch.
+  // Filters:
+  //  - Skip T1 Strategic firms (always active, not reactivation candidates)
+  //  - Skip firms with live tpm >= 3 (active firms, never truly dormant)
+  //  - Require new transcript date > first activity date (something happened after our touch)
   for (const f of state.firms) {
     const acts = state.activity[f.tenantId];
     if (!acts || acts.length === 0) continue;
     if (state.reactivated[f.tenantId]) continue;
     if (!f.lastTranscript) continue;
+    if ((f.tpm || 0) >= 3) continue; // Too active to be a reactivation
+    // Compute tier inline since we may run before enrich
+    const tier = tierOf ? tierOf(f) : null;
+    if (tier === 'T1 Strategic') continue;
     const lastTx = new Date(f.lastTranscript);
     const firstAct = new Date(Math.min(...acts.map(a => new Date(a.date).getTime())));
-    const gapDays = (lastTx - firstAct) / 86400000;
-    if (lastTx > firstAct && gapDays >= 30) {
+    if (lastTx > firstAct) {
+      const responseDays = Math.max(0, Math.round((lastTx - firstAct) / 86400000));
       state.reactivated[f.tenantId] = {
         reactivatedAt: new Date().toISOString(),
         firstActivityDate: firstAct.toISOString(),
         lastTranscriptAtReactivation: f.lastTranscript,
-        gapDays: Math.round(gapDays),
+        responseDays: responseDays,
         activityCount: acts.length,
         firmName: f.name
       };
